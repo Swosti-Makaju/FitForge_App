@@ -8,8 +8,8 @@ class _PeriodData {
   final int totalCalories;
   final int totalWorkouts;
   final int activeDays;
-  final String periodLabel;
-  const _PeriodData({required this.bars, required this.totalCalories, required this.totalWorkouts, required this.activeDays, required this.periodLabel});
+  final int totalMinutes;
+  const _PeriodData({required this.bars, required this.totalCalories, required this.totalWorkouts, required this.activeDays, required this.totalMinutes});
 }
 
 class _BarEntry {
@@ -29,6 +29,10 @@ class _ProgressScreenState extends State<ProgressScreen> with TickerProviderStat
   late AnimationController _barCtrl;
   late Animation<double> _barAnim;
   int _selectedPeriod = 0;
+  // Body metrics editing
+  bool _editingMetrics = false;
+  late TextEditingController _weightCtrl;
+  late TextEditingController _bodyFatCtrl;
 
   @override
   void initState() {
@@ -38,7 +42,20 @@ class _ProgressScreenState extends State<ProgressScreen> with TickerProviderStat
   }
 
   @override
-  void dispose() { _barCtrl.dispose(); super.dispose(); }
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final state = AppStateProvider.of(context);
+    _weightCtrl = TextEditingController(text: state.weight.toStringAsFixed(1));
+    _bodyFatCtrl = TextEditingController(text: state.bodyFat.toStringAsFixed(1));
+  }
+
+  @override
+  void dispose() {
+    _barCtrl.dispose();
+    _weightCtrl.dispose();
+    _bodyFatCtrl.dispose();
+    super.dispose();
+  }
 
   _PeriodData _getPeriodData(AppState state) {
     switch (_selectedPeriod) {
@@ -47,30 +64,36 @@ class _ProgressScreenState extends State<ProgressScreen> with TickerProviderStat
         final days = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
         return _PeriodData(
           bars: List.generate(logs.length, (i) => _BarEntry(days[i], logs[i].caloriesBurned, isHighlight: i == logs.length - 1)),
-          totalCalories: state.weeklyCaloriesTotal, totalWorkouts: state.weeklyWorkoutCount,
-          activeDays: logs.where((l) => l.workoutDone).length, periodLabel: 'Today',
+          totalCalories: state.weeklyCaloriesTotal,
+          totalWorkouts: state.weeklyWorkoutCount,
+          activeDays: logs.where((l) => l.workoutDone).length,
+          totalMinutes: state.weeklyActiveMinutes,
         );
       case 1:
         final weekTotals = [2840, 3120, 2650, state.weeklyCaloriesTotal];
         return _PeriodData(
           bars: List.generate(4, (i) => _BarEntry('W${i + 1}', weekTotals[i], isHighlight: i == 3)),
-          totalCalories: weekTotals.fold(0, (a, b) => a + b), totalWorkouts: 18, activeDays: 16, periodLabel: 'This Week',
+          totalCalories: weekTotals.fold(0, (a, b) => a + b),
+          totalWorkouts: state.weeklyWorkoutCount + 13,
+          activeDays: 16, totalMinutes: state.weeklyActiveMinutes + 210,
         );
       case 2:
         final monthTotals = [11200, 13500, 12400, 14800];
         return _PeriodData(
           bars: List.generate(4, (i) => _BarEntry('M${i + 1}', monthTotals[i], isHighlight: i == 3)),
-          totalCalories: monthTotals.fold(0, (a, b) => a + b), totalWorkouts: 22, activeDays: 18, periodLabel: 'This Month',
+          totalCalories: monthTotals.fold(0, (a, b) => a + b),
+          totalWorkouts: 22, activeDays: 18, totalMinutes: 1080,
         );
       case 3:
         final months = ['J', 'F', 'M', 'A', 'M', 'J', 'J', 'A', 'S', 'O', 'N', 'D'];
         final yearCals = [9200, 11400, 13200, 10800, 12600, 14000, 11000, 13500, 12000, 11800, 13100, 14500];
         return _PeriodData(
           bars: List.generate(12, (i) => _BarEntry(months[i], yearCals[i], isHighlight: i == 4)),
-          totalCalories: yearCals.fold(0, (a, b) => a + b), totalWorkouts: 287, activeDays: 198, periodLabel: 'This Year',
+          totalCalories: yearCals.fold(0, (a, b) => a + b),
+          totalWorkouts: 287, activeDays: 198, totalMinutes: 14350,
         );
       default:
-        return _PeriodData(bars: [_BarEntry('?', 100)], totalCalories: 100, totalWorkouts: 1, activeDays: 1, periodLabel: 'N/A');
+        return const _PeriodData(bars: [_BarEntry('?', 100)], totalCalories: 100, totalWorkouts: 1, activeDays: 1, totalMinutes: 30);
     }
   }
 
@@ -92,6 +115,8 @@ class _ProgressScreenState extends State<ProgressScreen> with TickerProviderStat
           SliverToBoxAdapter(child: _buildSummaryCards(th, data)),
           SliverToBoxAdapter(child: _buildCaloriesChart(th, data)),
           SliverToBoxAdapter(child: _buildBodyMetrics(context, th, state)),
+          if (state.workoutHistory.isNotEmpty)
+            SliverToBoxAdapter(child: _buildWorkoutHistory(th, state)),
           SliverToBoxAdapter(child: _buildAchievements(th, state)),
           const SliverToBoxAdapter(child: SizedBox(height: 40)),
         ],
@@ -108,7 +133,7 @@ class _ProgressScreenState extends State<ProgressScreen> with TickerProviderStat
   );
 
   Widget _buildPeriodSelector(AppThemeData th) {
-    final periods = ['Today', 'Week', 'Month', 'Year'];
+    final periods = ['Daily', 'Weekly', 'Monthly', 'Year'];
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
       child: Container(
@@ -145,11 +170,11 @@ class _ProgressScreenState extends State<ProgressScreen> with TickerProviderStat
       padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
       child: IntrinsicHeight(
         child: Row(children: [
-          Expanded(child: _SummaryCard(th: th, label: 'Workouts', value: '${data.totalWorkouts}', change: '+28', color: AppTheme.accentNeon)),
+          Expanded(child: _SummaryCard(th: th, label: 'Workouts', value: '${data.totalWorkouts}', icon: Icons.fitness_center, color: AppTheme.accentNeon)),
           const SizedBox(width: 12),
-          Expanded(child: _SummaryCard(th: th, label: 'Calories', value: data.totalCalories > 999 ? '${(data.totalCalories / 1000).toStringAsFixed(1)}k' : '${data.totalCalories}', change: '+12%', color: AppTheme.accentOrange)),
+          Expanded(child: _SummaryCard(th: th, label: 'Calories', value: data.totalCalories > 999 ? '${(data.totalCalories / 1000).toStringAsFixed(1)}k' : '${data.totalCalories}', icon: Icons.local_fire_department, color: AppTheme.accentOrange)),
           const SizedBox(width: 12),
-          Expanded(child: _SummaryCard(th: th, label: 'Sessions', value: '${data.activeDays}', change: '+7', color: AppTheme.accentPurple)),
+          Expanded(child: _SummaryCard(th: th, label: 'Active Min', value: '${data.totalMinutes}', icon: Icons.timer, color: AppTheme.accentPurple)),
         ]),
       ),
     );
@@ -166,7 +191,7 @@ class _ProgressScreenState extends State<ProgressScreen> with TickerProviderStat
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-              Text('Calories Burned — ${data.periodLabel}', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15, color: th.textPrimary)),
+              Text('Calories Burned', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15, color: th.textPrimary)),
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                 decoration: BoxDecoration(color: AppTheme.accentOrange.withOpacity(0.1), borderRadius: BorderRadius.circular(8)),
@@ -184,12 +209,12 @@ class _ProgressScreenState extends State<ProgressScreen> with TickerProviderStat
                     final ratio = bar.calories / maxCal;
                     return Expanded(
                       child: Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 4),
+                        padding: const EdgeInsets.symmetric(horizontal: 3),
                         child: Column(
                           mainAxisAlignment: MainAxisAlignment.end,
                           children: [
                             if (bar.isHighlight)
-                              Text('${(bar.calories/1000).toStringAsFixed(1)}k', style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w900, color: AppTheme.accentOrange)),
+                              Text('${bar.calories}', style: const TextStyle(fontSize: 9, fontWeight: FontWeight.w900, color: AppTheme.accentOrange)),
                             const SizedBox(height: 4),
                             Flexible(
                               child: Container(
@@ -225,23 +250,128 @@ class _ProgressScreenState extends State<ProgressScreen> with TickerProviderStat
         children: [
           Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
             Text('Body Metrics', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 18, color: th.textPrimary)),
-            TextButton(onPressed: () {}, child: const Text('Update', style: TextStyle(color: AppTheme.accentNeon, fontWeight: FontWeight.bold))),
+            GestureDetector(
+              onTap: () {
+                if (_editingMetrics) {
+                  // Save
+                  state.updateBodyMetrics(
+                    weight: double.tryParse(_weightCtrl.text),
+                    bodyFat: double.tryParse(_bodyFatCtrl.text),
+                  );
+                }
+                setState(() => _editingMetrics = !_editingMetrics);
+              },
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                decoration: BoxDecoration(
+                  color: _editingMetrics ? AppTheme.accentNeon.withOpacity(0.15) : th.bgElevated,
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: _editingMetrics ? AppTheme.accentNeon : th.divider),
+                ),
+                child: Text(
+                  _editingMetrics ? 'Save' : 'Update',
+                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: _editingMetrics ? AppTheme.accentNeon : th.textMuted),
+                ),
+              ),
+            ),
           ]),
           const SizedBox(height: 12),
           Row(children: [
-            Expanded(child: _MetricCard(th: th, label: 'Weight', value: '50.5', unit: 'KG', change: '-0.8', color: AppTheme.accentNeon)),
+            Expanded(child: _MetricCard(
+              th: th, label: 'Weight', unit: 'KG',
+              value: state.weight.toStringAsFixed(1),
+              color: AppTheme.accentNeon,
+              isEditing: _editingMetrics,
+              controller: _weightCtrl,
+            )),
             const SizedBox(width: 12),
-            Expanded(child: _MetricCard(th: th, label: 'Body Fat', value: '14.2', unit: '%', change: '-1.2', color: AppTheme.accentBlue)),
+            Expanded(child: _MetricCard(
+              th: th, label: 'Body Fat', unit: '%',
+              value: state.bodyFat.toStringAsFixed(1),
+              color: AppTheme.accentBlue,
+              isEditing: _editingMetrics,
+              controller: _bodyFatCtrl,
+            )),
           ]),
+          const SizedBox(height: 12),
+          // BMI card
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(color: th.bgCard, borderRadius: BorderRadius.circular(20), border: Border.all(color: th.divider)),
+            child: Row(children: [
+              Icon(Icons.monitor_heart_outlined, color: AppTheme.accentPurple, size: 28),
+              const SizedBox(width: 16),
+              Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text('BMI', style: TextStyle(fontSize: 12, color: th.textMuted, fontWeight: FontWeight.w600)),
+                Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
+                  Text(state.bmi.toStringAsFixed(1), style: TextStyle(fontSize: 24, fontWeight: FontWeight.w900, color: th.textPrimary)),
+                  const SizedBox(width: 8),
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 3),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                      decoration: BoxDecoration(color: AppTheme.accentNeon.withOpacity(0.12), borderRadius: BorderRadius.circular(8)),
+                      child: Text(state.bmiCategory, style: const TextStyle(fontSize: 11, color: AppTheme.accentNeon, fontWeight: FontWeight.w700)),
+                    ),
+                  ),
+                ]),
+              ])),
+            ]),
+          ),
         ],
       ),
     );
   }
 
+  Widget _buildWorkoutHistory(AppThemeData th, AppState state) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text('Workout History', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 18, color: th.textPrimary)),
+        const SizedBox(height: 12),
+        ...state.workoutHistory.take(5).map((r) {
+          final mins = r.durationSeconds ~/ 60;
+          final today = r.date.day == DateTime.now().day;
+          return Container(
+            margin: const EdgeInsets.only(bottom: 10),
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(color: th.bgCard, borderRadius: BorderRadius.circular(16), border: Border.all(color: th.divider)),
+            child: Row(children: [
+              Container(
+                width: 44, height: 44,
+                decoration: BoxDecoration(color: th.bgElevated, borderRadius: BorderRadius.circular(12)),
+                child: Center(child: Text(r.planEmoji, style: const TextStyle(fontSize: 22))),
+              ),
+              const SizedBox(width: 12),
+              Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text(r.planName, style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14, color: th.textPrimary)),
+                Text(today ? 'Today  •  ${mins}min  •  ${r.caloriesBurned} kcal' : '${r.date.day}/${r.date.month}  •  ${mins}min  •  ${r.caloriesBurned} kcal',
+                    style: TextStyle(fontSize: 11, color: th.textMuted)),
+              ])),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: LinearProgressIndicator(
+                  value: r.completionRate,
+                  backgroundColor: th.bgElevated,
+                  valueColor: const AlwaysStoppedAnimation(AppTheme.accentNeon),
+                  minHeight: 4,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Text('${(r.completionRate * 100).toInt()}%', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: AppTheme.accentNeon)),
+            ]),
+          );
+        }),
+      ]),
+    );
+  }
+
   Widget _buildAchievements(AppThemeData th, AppState state) {
     final achievements = [
-      {'icon': '🔥', 'title': '7-Day Streak', 'desc': 'Keep it up!'},
-      {'icon': '🏆', 'title': 'Century Club', 'desc': '100 Workouts done'},
+      {'icon': '🔥', 'title': '7-Day Streak', 'desc': 'Worked out 7 days in a row', 'earned': (state.currentUser?.currentStreak ?? 0) >= 7},
+      {'icon': '💯', 'title': '100 Workouts', 'desc': 'Completed 100 total workouts', 'earned': (state.currentUser?.totalWorkouts ?? 0) >= 100},
+      {'icon': '⚡', 'title': 'Speed Demon', 'desc': 'Finished a workout in under 20min', 'earned': state.workoutHistory.any((r) => r.durationSeconds < 1200)},
+      {'icon': '🏆', 'title': 'PR Breaker', 'desc': 'Completed 5 different workout types', 'earned': state.workoutHistory.map((r) => r.planName).toSet().length >= 5},
     ];
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 20),
@@ -250,53 +380,77 @@ class _ProgressScreenState extends State<ProgressScreen> with TickerProviderStat
         children: [
           Text('Achievements', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 18, color: th.textPrimary)),
           const SizedBox(height: 16),
-          ...achievements.map((a) => Container(
-            margin: const EdgeInsets.only(bottom: 12),
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(color: th.bgCard, borderRadius: BorderRadius.circular(20), border: Border.all(color: th.divider)),
-            child: Row(children: [
-              Text(a['icon']!, style: const TextStyle(fontSize: 28, fontFamily: '')),
-              const SizedBox(width: 16),
-              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Text(a['title']!, style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16, color: th.textPrimary)),
-                Text(a['desc']!, style: TextStyle(fontSize: 12, color: th.textMuted)),
-              ]),
-            ]),
-          )),
+          GridView.count(
+            crossAxisCount: 2,
+            mainAxisSpacing: 12,
+            crossAxisSpacing: 12,
+            childAspectRatio: 1.6,
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            children: achievements.map((a) {
+              final earned = a['earned'] as bool;
+              return Container(
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: earned ? AppTheme.accentNeon.withOpacity(0.06) : th.bgCard,
+                  borderRadius: BorderRadius.circular(18),
+                  border: Border.all(color: earned ? AppTheme.accentNeon.withOpacity(0.3) : th.divider),
+                ),
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+                  Row(children: [
+                    Text(a['icon']! as String, style: TextStyle(fontSize: 22, color: earned ? null : const Color(0x55000000))),
+                    if (earned) ...[
+                      const SizedBox(width: 4),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(color: AppTheme.accentNeon.withOpacity(0.15), borderRadius: BorderRadius.circular(6)),
+                        child: const Text('✓', style: TextStyle(fontSize: 10, color: AppTheme.accentNeon, fontWeight: FontWeight.bold)),
+                      ),
+                    ],
+                  ]),
+                  Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Text(a['title']! as String, style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13, color: earned ? th.textPrimary : th.textMuted)),
+                    Text(a['desc']! as String, style: TextStyle(fontSize: 10, color: th.textMuted), maxLines: 1, overflow: TextOverflow.ellipsis),
+                  ]),
+                ]),
+              );
+            }).toList(),
+          ),
         ],
       ),
     );
   }
 }
 
+// ─── Sub-widgets ───────────────────────────────────────────────
+
 class _SummaryCard extends StatelessWidget {
-  final String label, value, change;
+  final String label, value;
   final Color color;
+  final IconData icon;
   final AppThemeData th;
-  const _SummaryCard({required this.label, required this.value, required this.change, required this.color, required this.th});
+  const _SummaryCard({required this.label, required this.value, required this.color, required this.icon, required this.th});
 
   @override
   Widget build(BuildContext context) => Container(
     padding: const EdgeInsets.all(16),
     decoration: BoxDecoration(color: th.bgCard, borderRadius: BorderRadius.circular(20), border: Border.all(color: th.divider)),
     child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Text(label, style: TextStyle(fontSize: 11, color: th.textMuted, fontWeight: FontWeight.w500)),
+      Icon(icon, color: color, size: 20),
       const SizedBox(height: 8),
-      Text(value, style: TextStyle(fontWeight: FontWeight.w900, fontSize: 22, color: color)),
-      const SizedBox(height: 6),
-      Row(children: [
-        const Icon(Icons.arrow_upward, size: 12, color: AppTheme.accentNeon),
-        Text(change, style: const TextStyle(fontSize: 11, color: AppTheme.accentNeon, fontWeight: FontWeight.w700)),
-      ]),
+      Text(value, style: TextStyle(fontWeight: FontWeight.w900, fontSize: 20, color: color)),
+      Text(label, style: TextStyle(fontSize: 11, color: th.textMuted, fontWeight: FontWeight.w500)),
     ]),
   );
 }
 
 class _MetricCard extends StatelessWidget {
-  final String label, value, unit, change;
+  final String label, value, unit;
   final Color color;
   final AppThemeData th;
-  const _MetricCard({required this.label, required this.value, required this.unit, required this.change, required this.color, required this.th});
+  final bool isEditing;
+  final TextEditingController controller;
+  const _MetricCard({required this.label, required this.value, required this.unit, required this.color, required this.th, required this.isEditing, required this.controller});
 
   @override
   Widget build(BuildContext context) => Container(
@@ -305,17 +459,22 @@ class _MetricCard extends StatelessWidget {
     child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       Text(label, style: TextStyle(fontSize: 12, color: th.textMuted, fontWeight: FontWeight.w600)),
       const SizedBox(height: 12),
-      Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
+      isEditing
+          ? TextField(
+        controller: controller,
+        keyboardType: TextInputType.number,
+        style: TextStyle(fontWeight: FontWeight.w900, fontSize: 24, color: color),
+        decoration: InputDecoration(
+          contentPadding: EdgeInsets.zero,
+          border: InputBorder.none,
+          suffix: Text(unit, style: TextStyle(fontSize: 12, color: th.textMuted, fontWeight: FontWeight.bold)),
+        ),
+      )
+          : Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
         Text(value, style: TextStyle(fontWeight: FontWeight.w900, fontSize: 28, color: th.textPrimary)),
         const SizedBox(width: 4),
         Padding(padding: const EdgeInsets.only(bottom: 4), child: Text(unit, style: TextStyle(fontSize: 12, color: th.textMuted, fontWeight: FontWeight.bold))),
       ]),
-      const SizedBox(height: 12),
-      Container(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-        decoration: BoxDecoration(color: AppTheme.accentOrange.withOpacity(0.1), borderRadius: BorderRadius.circular(8)),
-        child: Text(change, style: const TextStyle(color: AppTheme.accentOrange, fontWeight: FontWeight.w800, fontSize: 11)),
-      ),
     ]),
   );
 }

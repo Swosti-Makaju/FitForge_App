@@ -12,6 +12,7 @@ class UserModel {
   int weeklyGoal;
   int currentStreak;
   int totalWorkouts;
+  int bestStreak;
 
   UserModel({
     required this.name,
@@ -24,6 +25,7 @@ class UserModel {
     this.weeklyGoal = 5,
     this.currentStreak = 0,
     this.totalWorkouts = 0,
+    this.bestStreak = 0,
   });
 }
 
@@ -82,6 +84,29 @@ class WorkoutPlan {
   int get exerciseCount => exercises.length;
 }
 
+// ─── Completed Workout Record ─────────────────────────────────
+class WorkoutRecord {
+  final DateTime date;
+  final String planName;
+  final String planEmoji;
+  final int durationSeconds;
+  final int caloriesBurned;
+  final int exercisesCompleted;
+  final int totalExercises;
+
+  const WorkoutRecord({
+    required this.date,
+    required this.planName,
+    required this.planEmoji,
+    required this.durationSeconds,
+    required this.caloriesBurned,
+    required this.exercisesCompleted,
+    required this.totalExercises,
+  });
+
+  double get completionRate => totalExercises > 0 ? exercisesCompleted / totalExercises : 0;
+}
+
 // ─── Daily Log ────────────────────────────────────────────────
 class DailyLog {
   final DateTime date;
@@ -109,7 +134,6 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Called when the OS brightness changes while the app is running.
   void syncSystemTheme(bool isDark) {
     _isDarkMode = isDark;
     notifyListeners();
@@ -119,7 +143,6 @@ class AppState extends ChangeNotifier {
   bool _isLoggedIn = false;
   UserModel? _currentUser;
 
-  // Registered users store: email -> {password, UserModel}
   final Map<String, Map<String, dynamic>> _registeredUsers = {};
 
   bool get isLoggedIn => _isLoggedIn;
@@ -129,12 +152,16 @@ class AppState extends ChangeNotifier {
   int _todayCalories = 1842;
   int _todaySteps = 8421;
   int _todayActiveMinutes = 52;
-  double _todayWater = 1.8; // liters
+  double _todayWater = 1.8;
 
   int get todayCalories => _todayCalories;
   int get todaySteps => _todaySteps;
   int get todayActiveMinutes => _todayActiveMinutes;
   double get todayWater => _todayWater;
+
+  // Step goal
+  int get stepGoal => 10000;
+  double get stepProgress => (_todaySteps / stepGoal).clamp(0.0, 1.0);
 
   // Active workout state
   bool _workoutActive = false;
@@ -147,6 +174,10 @@ class AppState extends ChangeNotifier {
   List<Exercise> get activeExercises => _activeExercises;
   WorkoutPlan? get activeWorkoutPlan => _activeWorkoutPlan;
 
+  // Workout history
+  final List<WorkoutRecord> _workoutHistory = [];
+  List<WorkoutRecord> get workoutHistory => _workoutHistory;
+
   // Weekly logs
   final List<DailyLog> _weeklyLogs = [
     DailyLog(date: DateTime.now().subtract(const Duration(days: 6)), caloriesBurned: 420, steps: 7200, activeMinutes: 38, workoutDone: true),
@@ -155,15 +186,14 @@ class AppState extends ChangeNotifier {
     DailyLog(date: DateTime.now().subtract(const Duration(days: 3)), caloriesBurned: 620, steps: 11200, activeMinutes: 65, workoutDone: true),
     DailyLog(date: DateTime.now().subtract(const Duration(days: 2)), caloriesBurned: 480, steps: 8800, activeMinutes: 45, workoutDone: true),
     DailyLog(date: DateTime.now().subtract(const Duration(days: 1)), caloriesBurned: 380, steps: 7600, activeMinutes: 40, workoutDone: true),
-    DailyLog(date: DateTime.now(), caloriesBurned: _calcToday(), steps: 8421, activeMinutes: 52, workoutDone: false),
+    DailyLog(date: DateTime.now(), caloriesBurned: 1842, steps: 8421, activeMinutes: 52, workoutDone: false),
   ];
-
-  static int _calcToday() => 1842;
 
   List<DailyLog> get weeklyLogs => _weeklyLogs;
 
   int get weeklyWorkoutCount => _weeklyLogs.where((l) => l.workoutDone).length;
   int get weeklyCaloriesTotal => _weeklyLogs.fold(0, (sum, l) => sum + l.caloriesBurned);
+  int get weeklyActiveMinutes => _weeklyLogs.fold(0, (sum, l) => sum + l.activeMinutes);
 
   // Body metrics (dynamic)
   double _weight = 78.5;
@@ -173,6 +203,19 @@ class AppState extends ChangeNotifier {
   double get weight => _weight;
   double get bodyFat => _bodyFat;
   double get muscle => _muscle;
+
+  // Weight history for chart
+  final List<double> _weightHistory = [80.2, 79.8, 79.5, 79.1, 78.9, 78.7, 78.5];
+  List<double> get weightHistory => _weightHistory;
+
+  // Notifications (for badge count)
+  int _unreadNotifications = 3;
+  int get unreadNotifications => _unreadNotifications;
+
+  void markNotificationsRead() {
+    _unreadNotifications = 0;
+    notifyListeners();
+  }
 
   // All workout plans
   List<WorkoutPlan> get workoutPlans => _workoutPlans;
@@ -195,7 +238,7 @@ class AppState extends ChangeNotifier {
     WorkoutPlan(
       name: 'Back & Biceps',
       emoji: '🏋️',
-      color: const Color(0xFF00F5A0),
+      color: const Color(0xFF00C87A),
       duration: '50 min',
       difficulty: 'Advanced',
       exercises: [
@@ -268,12 +311,9 @@ class AppState extends ChangeNotifier {
 
   bool login(String email, String password) {
     final key = email.trim().toLowerCase();
-    // Must have registered first
     if (!_registeredUsers.containsKey(key)) return false;
     final stored = _registeredUsers[key]!;
     if (stored['password'] != password) return false;
-
-    // Restore the saved UserModel
     _currentUser = stored['user'] as UserModel;
     _isLoggedIn = true;
     notifyListeners();
@@ -283,7 +323,6 @@ class AppState extends ChangeNotifier {
   bool register(String name, String email, String password, String goal) {
     final key = email.trim().toLowerCase();
     if (name.isEmpty || email.isEmpty || password.length < 6) return false;
-    // Don't allow duplicate registrations
     if (_registeredUsers.containsKey(key)) return false;
 
     final newUser = UserModel(
@@ -299,9 +338,7 @@ class AppState extends ChangeNotifier {
       totalWorkouts: 0,
     );
 
-    // Save to in-memory store
     _registeredUsers[key] = {'password': password, 'user': newUser};
-
     _currentUser = newUser;
     _isLoggedIn = true;
     notifyListeners();
@@ -358,19 +395,36 @@ class AppState extends ChangeNotifier {
   }
 
   void stopWorkout() {
-    if (_workoutActive) {
+    if (_activeWorkoutPlan != null) {
       final done = _activeExercises.where((e) => e.isCompleted).length;
+      final cal = (_elapsedSeconds * 0.13).toInt();
+      final mins = _elapsedSeconds ~/ 60;
+
+      // Save record
+      _workoutHistory.insert(0, WorkoutRecord(
+        date: DateTime.now(),
+        planName: _activeWorkoutPlan!.name,
+        planEmoji: _activeWorkoutPlan!.emoji,
+        durationSeconds: _elapsedSeconds,
+        caloriesBurned: cal,
+        exercisesCompleted: done,
+        totalExercises: _activeExercises.length,
+      ));
+
       if (done > 0) {
         _currentUser?.totalWorkouts++;
         _currentUser?.currentStreak++;
-        final cal = (_elapsedSeconds * 0.13).toInt();
+        // Update best streak
+        if ((_currentUser?.currentStreak ?? 0) > (_currentUser?.bestStreak ?? 0)) {
+          _currentUser?.bestStreak = _currentUser!.currentStreak;
+        }
         _todayCalories += cal;
-        _todayActiveMinutes += (_elapsedSeconds ~/ 60);
-        _weeklyLogs.last = DailyLog(
+        _todayActiveMinutes += mins;
+        _weeklyLogs[_weeklyLogs.length - 1] = DailyLog(
           date: _weeklyLogs.last.date,
           caloriesBurned: _weeklyLogs.last.caloriesBurned + cal,
           steps: _weeklyLogs.last.steps,
-          activeMinutes: _weeklyLogs.last.activeMinutes + (_elapsedSeconds ~/ 60),
+          activeMinutes: _weeklyLogs.last.activeMinutes + mins,
           workoutDone: true,
         );
       }
@@ -384,7 +438,6 @@ class AppState extends ChangeNotifier {
 
   void tickTimer() {
     _elapsedSeconds++;
-    // Incrementally add calories
     if (_elapsedSeconds % 10 == 0) {
       _todayCalories += 1;
     }
@@ -402,6 +455,11 @@ class AppState extends ChangeNotifier {
 
   void addWater(double liters) {
     _todayWater = (_todayWater + liters).clamp(0, 5);
+    notifyListeners();
+  }
+
+  void removeWater(double liters) {
+    _todayWater = (_todayWater - liters).clamp(0, 5);
     notifyListeners();
   }
 
@@ -425,4 +483,19 @@ class AppState extends ChangeNotifier {
       : completedExerciseCount / _activeExercises.length;
 
   int get estimatedCaloriesBurned => (_elapsedSeconds * 0.13).toInt();
+
+  // BMI calculation
+  double get bmi {
+    if (_currentUser == null) return 0;
+    final h = _currentUser!.height / 100;
+    return _currentUser!.weight / (h * h);
+  }
+
+  String get bmiCategory {
+    final b = bmi;
+    if (b < 18.5) return 'Underweight';
+    if (b < 25) return 'Normal';
+    if (b < 30) return 'Overweight';
+    return 'Obese';
+  }
 }
