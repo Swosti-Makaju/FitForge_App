@@ -44,6 +44,8 @@ class _FitForgeAppState extends State<FitForgeApp> {
     return AppStateProvider(
       state: _appState,
       child: MaterialApp(
+        // key ensures the entire Navigator stack is cleared when auth state changes
+        key: ValueKey(_appState.isLoggedIn),
         title: 'FitForge',
         debugShowCheckedModeBanner: false,
         theme: AppTheme.lightTheme,

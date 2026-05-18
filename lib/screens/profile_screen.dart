@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../main.dart';
+import '../state/app_state.dart';
 import '../theme/app_theme.dart';
 import 'help_support_screen.dart';
 import 'notification_screen.dart';
@@ -361,11 +362,11 @@ class ProfileScreen extends StatelessWidget {
 
   // ─── Dialogs & Sheets ─────────────────────────────────────────
 
-  void _confirmLogout(BuildContext ctx, state) {
-    final th = AppTheme.of(ctx);
+  void _confirmLogout(BuildContext context, AppState state) {
+    final th = AppTheme.of(context);
     showDialog(
-      context: ctx,
-      builder: (_) => AlertDialog(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
         backgroundColor: th.bgCard,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         title: Text('Sign Out?', style: TextStyle(
@@ -376,11 +377,16 @@ class ProfileScreen extends StatelessWidget {
         )),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(ctx),
+            onPressed: () => Navigator.pop(dialogContext),
             child: Text('Cancel', style: TextStyle(fontFamily: 'Poppins', color: th.textMuted)),
           ),
           ElevatedButton(
-            onPressed: () { Navigator.pop(ctx); state.logout(); },
+            onPressed: () {
+              // 1. Close the dialog first
+              Navigator.pop(dialogContext);
+              // 2. Clear navigation stack and call logout
+              state.logout();
+            },
             style: ElevatedButton.styleFrom(
               backgroundColor: AppTheme.errorRed,
               minimumSize: const Size(90, 40),

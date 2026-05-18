@@ -65,7 +65,6 @@ class _RegisterScreenState extends State<RegisterScreen> with TickerProviderStat
     } else {
       if (mounted) {
         setState(() => _loading = false);
-        Navigator.pushAndRemoveUntil(context, MaterialPageRoute(builder: (context) => const MainNavigation()), (route) => false);
       }
     }
   }
